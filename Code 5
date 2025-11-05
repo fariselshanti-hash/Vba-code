@@ -1,0 +1,145 @@
+Sub LRU_SRA_RAM_Indicator_Check()
+
+    Dim wb As Workbook
+    Dim wsMain As Worksheet
+    Dim wsFMECA As Worksheet
+    Dim wsMTA As Worksheet
+    Dim wsSummary As Worksheet
+    Dim lastRow As Long, fmecaLastRow As Long
+    Dim i As Long
+    Dim mainID As String
+    Dim code As String
+    Dim shouldHaveY As Boolean
+    Dim hasY As Boolean
+    Dim matchCell As Range
+    Dim criteriaRow As Long
+    Dim fmecaCodes As Collection
+    Dim fmecaCode As Variant
+    Dim trimmedCode As String
+    Dim missingYList As Collection
+    Dim extraYList As Collection
+    Dim resultSummary As String
+
+    ' === Set workbook reference ===
+    Set wb = ActiveWorkbook
+
+    ' === Check if required sheets exist ===
+    On Error GoTo SheetError
+    Set wsMain = wb.Sheets("LRU SRA")
+    Set wsFMECA = wb.Sheets("FMECA")
+    Set wsMTA = wb.Sheets("MTA")
+    Set wsSummary = wb.Sheets("Summary")
+    On Error GoTo 0 ' Reset error handling
+
+    ' === Get last rows ===
+    lastRow = wsMain.Cells(wsMain.Rows.Count, "A").End(xlUp).Row
+    fmecaLastRow = wsFMECA.Cells(wsFMECA.Rows.Count, "A").End(xlUp).Row
+
+    ' === Collect valid FMECA codes ===
+    Set fmecaCodes = New Collection
+    On Error Resume Next
+    For i = 2 To fmecaLastRow
+        If IsNumeric(wsFMECA.Cells(i, "E").Value) Then
+            If wsFMECA.Cells(i, "E").Value > 0 Then
+                fmecaCodes.Add wsFMECA.Cells(i, "A").Value
+            End If
+        End If
+    Next i
+    On Error GoTo 0
+
+    ' === Initialize result containers ===
+    Set missingYList = New Collection
+    Set extraYList = New Collection
+
+    ' === Clear previous highlights ===
+    wsMain.Range("AV2:AV" & lastRow).Interior.ColorIndex = 0
+
+    ' === Main loop ===
+    For i = 2 To lastRow
+        mainID = wsMain.Cells(i, "A").Value
+        code = Trim(wsMain.Cells(i, "B").Value)
+        shouldHaveY = False
+        hasY = (Trim(UCase(wsMain.Cells(i, "AV").Value)) = "Y")
+
+        ' --- Direct match in FMECA
+        Set matchCell = wsFMECA.Columns("A").Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+        If Not matchCell Is Nothing Then
+            criteriaRow = matchCell.Row
+            If IsNumeric(wsFMECA.Cells(criteriaRow, "E").Value) Then
+                If wsFMECA.Cells(criteriaRow, "E").Value > 0 Then
+                    shouldHaveY = True
+                End If
+            End If
+        End If
+
+        ' --- Trimmed match (indenture logic)
+        If Not shouldHaveY Then
+            For Each fmecaCode In fmecaCodes
+                If Len(fmecaCode) >= 3 Then
+                    trimmedCode = Left(fmecaCode, Len(fmecaCode) - 2)
+                    If code = trimmedCode Then
+                        shouldHaveY = True
+                        Exit For
+                    End If
+                End If
+            Next fmecaCode
+        End If
+
+        ' --- MTA check
+        Set matchCell = wsMTA.Columns("A").Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+        If Not matchCell Is Nothing Then
+            criteriaRow = matchCell.Row
+            If Left(wsMTA.Cells(criteriaRow, "D").Value, 2) = "HG" Then
+                shouldHaveY = True
+            End If
+        End If
+
+        ' === Result evaluation
+        If shouldHaveY And Not hasY Then
+            wsMain.Cells(i, "AV").Interior.Color = RGB(255, 199, 206) ' Red
+            missingYList.Add code
+        ElseIf Not shouldHaveY And hasY Then
+            wsMain.Cells(i, "AV").Interior.Color = RGB(255, 235, 156) ' Yellow
+            extraYList.Add code
+        End If
+    Next i
+
+    ' === Build summary message ===
+    resultSummary = ""
+
+    If extraYList.Count > 0 Then
+        resultSummary = "The following LCN codes in the LRU SRA are RAM indicated and shouldn’t be: " & _
+                        JoinCollection(extraYList, ", ") & "."
+    End If
+
+    If missingYList.Count > 0 Then
+        If resultSummary <> "" Then resultSummary = resultSummary & " "
+        resultSummary = resultSummary & "The following LCN codes in the LRU SRA are not RAM indicated but should be: " & _
+                        JoinCollection(missingYList, ", ") & "."
+    End If
+
+    If resultSummary = "" Then
+        resultSummary = "✅ All LCN codes in the LRU SRA are correctly RAM indicated."
+    End If
+
+    ' === Output to Summary sheet ===
+    wsSummary.Range("A2").Value = "LRU SRA RAM Indicator Check"
+    wsSummary.Range("B2").Value = resultSummary
+
+    Exit Sub
+
+SheetError:
+    MsgBox "One or more required sheets (LRU SRA, FMECA, MTA, Summary) were not found in the active workbook.", vbCritical
+
+End Sub
+
+' === Helper function to join items with a separator
+Function JoinCollection(col As Collection, separator As String) As String
+    Dim arr() As String
+    Dim i As Long
+    ReDim arr(0 To col.Count - 1)
+    For i = 1 To col.Count
+        arr(i - 1) = col(i)
+    Next i
+    JoinCollection = Join(arr, separator)
+End Function
