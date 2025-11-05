@@ -1,0 +1,129 @@
+Sub LRU_SRA_RAM_Indicator_Check()
+
+    Dim wsMain As Worksheet
+    Dim wsFMECA As Worksheet
+    Dim wsMTA As Worksheet
+    Dim wsSummary As Worksheet
+    Dim lastRow As Long, fmecaLastRow As Long
+    Dim i As Long
+    Dim mainID As String
+    Dim code As String
+    Dim shouldHaveY As Boolean
+    Dim hasY As Boolean
+    Dim matchCell As Range
+    Dim criteriaRow As Long
+    Dim fmecaCodes As Collection
+    Dim fmecaCode As Variant
+    Dim trimmedCode As String
+    Dim missingYList As Collection
+    Dim extraYList As Collection
+    Dim resultSummary As String
+
+    ' === Set sheet references ===
+    Set wsMain = ThisWorkbook.Sheets("LRU SRA")
+    Set wsFMECA = ThisWorkbook.Sheets("FMECA")
+    Set wsMTA = ThisWorkbook.Sheets("MTA")
+    Set wsSummary = ThisWorkbook.Sheets("Summary") ' Must already exist
+
+    lastRow = wsMain.Cells(wsMain.Rows.Count, "A").End(xlUp).Row
+    fmecaLastRow = wsFMECA.Cells(wsFMECA.Rows.Count, "A").End(xlUp).Row
+
+    ' === Build list of valid FMECA codes ===
+    Set fmecaCodes = New Collection
+    On Error Resume Next
+    For i = 2 To fmecaLastRow
+        If IsNumeric(wsFMECA.Cells(i, "E").Value) Then
+            If wsFMECA.Cells(i, "E").Value > 0 Then
+                fmecaCodes.Add wsFMECA.Cells(i, "A").Value
+            End If
+        End If
+    Next i
+    On Error GoTo 0
+
+    Set missingYList = New Collection
+    Set extraYList = New Collection
+
+    ' === Clear previous highlights in AV ===
+    wsMain.Range("AV2:AV" & lastRow).Interior.ColorIndex = 0
+
+    ' === Loop through LRU SRA ===
+    For i = 2 To lastRow
+        mainID = wsMain.Cells(i, "A").Value
+        code = Trim(wsMain.Cells(i, "B").Value)
+        shouldHaveY = False
+        hasY = (Trim(UCase(wsMain.Cells(i, "AV").Value)) = "Y")
+
+        ' --- Direct FMECA match
+        Set matchCell = wsFMECA.Columns("A").Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+        If Not matchCell Is Nothing Then
+            criteriaRow = matchCell.Row
+            If IsNumeric(wsFMECA.Cells(criteriaRow, "E").Value) Then
+                If wsFMECA.Cells(criteriaRow, "E").Value > 0 Then
+                    shouldHaveY = True
+                End If
+            End If
+        End If
+
+        ' --- Indenture logic: matches a FMECA code with last 2 characters removed
+        If Not shouldHaveY Then
+            For Each fmecaCode In fmecaCodes
+                If Len(fmecaCode) >= 3 Then
+                    trimmedCode = Left(fmecaCode, Len(fmecaCode) - 2)
+                    If code = trimmedCode Then
+                        shouldHaveY = True
+                        Exit For
+                    End If
+                End If
+            Next fmecaCode
+        End If
+
+        ' --- MTA match logic
+        Set matchCell = wsMTA.Columns("A").Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+        If Not matchCell Is Nothing Then
+            criteriaRow = matchCell.Row
+            If Left(wsMTA.Cells(criteriaRow, "D").Value, 2) = "HG" Then
+                shouldHaveY = True
+            End If
+        End If
+
+        ' === Record issues and highlight
+        If shouldHaveY And Not hasY Then
+            wsMain.Cells(i, "AV").Interior.Color = RGB(255, 199, 206) ' Red
+            missingYList.Add code
+        ElseIf Not shouldHaveY And hasY Then
+            wsMain.Cells(i, "AV").Interior.Color = RGB(255, 235, 156) ' Yellow
+            extraYList.Add code
+        End If
+    Next i
+
+    ' === Build summary string ===
+    resultSummary = ""
+
+    If extraYList.Count > 0 Then
+        resultSummary = "Code " & JoinCollection(extraYList, " and ") & " have a Y but shouldn’t. "
+    End If
+
+    If missingYList.Count > 0 Then
+        resultSummary = resultSummary & JoinCollection(missingYList, " and ") & " doesn’t have a Y but should."
+    End If
+
+    If resultSummary = "" Then
+        resultSummary = "✅ All rows passed the FMECA & MTA check."
+    End If
+
+    ' === Write output to Summary sheet ===
+    wsSummary.Range("A2").Value = "LRU SRA RAM Indicator Check"
+    wsSummary.Range("B2").Value = resultSummary
+
+End Sub
+
+' === Helper function: Join items in a collection with a separator
+Function JoinCollection(col As Collection, separator As String) As String
+    Dim arr() As String
+    Dim i As Long
+    ReDim arr(0 To col.Count - 1)
+    For i = 1 To col.Count
+        arr(i - 1) = col(i)
+    Next i
+    JoinCollection = Join(arr, separator)
+End Function
