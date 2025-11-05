@@ -1,0 +1,93 @@
+Sub CheckY_FMECA_MTA_TwoWay()
+
+    Dim wsMain As Worksheet
+    Dim wsFMECA As Worksheet
+    Dim wsMTA As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    Dim mainID As String
+    Dim code As String
+    Dim tempCode As String
+    Dim shouldHaveY As Boolean
+    Dim hasY As Boolean
+    Dim matchCell As Range
+    Dim criteriaRow As Long
+    Dim missingYList As String
+    Dim extraYList As String
+
+    Set wsMain = ThisWorkbook.Sheets("LRU SRA")
+    Set wsFMECA = ThisWorkbook.Sheets("FMECA")
+    Set wsMTA = ThisWorkbook.Sheets("MTA")
+    
+    lastRow = wsMain.Cells(wsMain.Rows.Count, "A").End(xlUp).Row
+
+    ' Clear previous highlights
+    wsMain.Range("AV2:AV" & lastRow).Interior.ColorIndex = 0
+    missingYList = ""
+    extraYList = ""
+
+    ' Loop through each row
+    For i = 2 To lastRow
+        mainID = wsMain.Cells(i, "A").Value
+        code = Trim(wsMain.Cells(i, "B").Value)
+        shouldHaveY = False
+        hasY = (Trim(UCase(wsMain.Cells(i, "AV").Value)) = "Y")
+
+        ' === CRITERIA 1 (FMECA) ===
+        ' Step 1: Exact match in FMECA with E > 0
+        Set matchCell = wsFMECA.Columns("A").Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+        If Not matchCell Is Nothing Then
+            criteriaRow = matchCell.Row
+            If IsNumeric(wsFMECA.Cells(criteriaRow, "E").Value) Then
+                If wsFMECA.Cells(criteriaRow, "E").Value > 0 Then
+                    shouldHaveY = True
+                End If
+            End If
+        End If
+
+        ' Step 2: Any trimmed version auto-qualifies
+        If Not shouldHaveY And Len(code) > 1 Then
+            shouldHaveY = True
+        End If
+
+        ' === CRITERIA 2 (MTA) ===
+        ' Step 3: Code found in MTA, and column D starts with "HG"
+        Set matchCell = wsMTA.Columns("A").Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+        If Not matchCell Is Nothing Then
+            criteriaRow = matchCell.Row
+            If Left(wsMTA.Cells(criteriaRow, "D").Value, 2) = "HG" Then
+                shouldHaveY = True
+            End If
+        End If
+
+        ' === Final Checks ===
+        If shouldHaveY And Not hasY Then
+            ' Should have Y, but doesn't
+            wsMain.Cells(i, "AV").Interior.Color = RGB(255, 199, 206) ' Red
+            missingYList = missingYList & "Row " & i & " (ID: " & mainID & ", Code: " & code & ")" & vbNewLine
+        ElseIf Not shouldHaveY And hasY Then
+            ' Has Y, but shouldn't
+            wsMain.Cells(i, "AV").Interior.Color = RGB(255, 235, 156) ' Yellow
+            extraYList = extraYList & "Row " & i & " (ID: " & mainID & ", Code: " & code & ")" & vbNewLine
+        End If
+    Next i
+
+    ' === Summary Report
+    Dim msg As String
+    msg = ""
+
+    If missingYList <> "" Then
+        msg = msg & "🔴 Missing 'Y' (should have it):" & vbNewLine & missingYList & vbNewLine
+    End If
+
+    If extraYList <> "" Then
+        msg = msg & "🟡 Extra 'Y' (should NOT have it):" & vbNewLine & extraYList
+    End If
+
+    If msg = "" Then
+        MsgBox "✅ All rows passed the FMECA & MTA check.", vbInformation
+    Else
+        MsgBox msg, vbExclamation, "Review Results"
+    End If
+
+End Sub
